@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import maplibregl, { useMap, setLine, setMask, setMarkers } from "./map.js";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import maplibregl, { useMap, setLine, setFill, setMask, setMarkers } from "./map.js";
 
 async function readJson(resp) {
   const text = await resp.text().catch(() => "");
@@ -57,10 +57,37 @@ export default function AreaPage({ areaToken, campaignToken }) {
   }, [areaToken, campaignToken]);
 
   // Show only this area: dim everything outside it (no colour on the area itself).
+  // Other areas (and their routes) are drawn *under* the mask, so they stay
+  // visible but darkened. Keyed on content so route-only changes don't redraw.
+  const areaPolyKey = useMemo(() => (data?.area ? JSON.stringify(data.area.polygon) : ""), [data]);
+  const othersKey = useMemo(() => JSON.stringify(data?.others || []), [data]);
   useEffect(() => {
     if (!map || !data?.area) return;
+
+    // Clear previously drawn other-area layers before redrawing.
+    const layerIds = map.getStyle().layers
+      .map((l) => l.id)
+      .filter((id) => id.startsWith("other-") || id.startsWith("otherroute-"));
+    for (const id of layerIds) map.removeLayer(id);
+    const sourceIds = Object.keys(map.getStyle().sources)
+      .filter((id) => id.startsWith("other-") || id.startsWith("otherroute-"));
+    for (const id of sourceIds) map.removeSource(id);
+
+    // Other areas' fills go under the mask (dimmed)…
+    for (const o of data.others || []) {
+      setFill(map, `other-${o.id}`, o.polygon, { fill: o.color || "#64748b", border: o.color || "#64748b", opacity: 0.3, width: 1 });
+    }
+
     setMask(map, "area-mask", data.area.polygon, 0.6);
     setLine(map, "area-outline", data.area.polygon.coordinates[0], { color: "#e5e7eb", width: 2 });
+
+    // …but their routes are drawn over the mask so they stay clearly visible.
+    for (const o of data.others || []) {
+      (o.routes || []).forEach((p, i) =>
+        setLine(map, `otherroute-${o.id}-${i}`, p.coordinates, { color: o.color || "#94a3b8", width: 3, opacity: 1 })
+      );
+    }
+
     if (fitted.current) return;
     fitted.current = true;
 
@@ -77,7 +104,7 @@ export default function AreaPage({ areaToken, campaignToken }) {
       try { map.fitBounds(bounds, { padding: 60, maxZoom: 16 }); } catch { /* ignore */ }
     };
     requestAnimationFrame(fit);
-  }, [map, data]);
+  }, [map, areaPolyKey, othersKey]);
 
   // Routes: draw in the area's colour, and remove deleted ones.
   // (Highlighting is a separate layer so hovering doesn't re-add every route.)

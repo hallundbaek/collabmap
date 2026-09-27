@@ -95,7 +95,9 @@ campaign's **Links** modal in the admin to copy any of them). The page title is
 `<area name> - <campaign name>`. Opening the link shows **only that area**:
 
 - The area has **no fill colour**; instead everything **outside** it is darkened,
-  so the area stands out against the normal basemap.
+  so the area stands out against the normal basemap. Other areas in the city (and
+  their routes for this campaign) are still visible, but **dimmed behind the
+  darkened background**.
 - **Add route** — click waypoints on the map (each **snaps to the nearest road**),
   then **Confirm**; **Undo** removes the last waypoint and **Cancel** aborts. The
   server routes a walking path between them; routes are recorded **for the campaign**

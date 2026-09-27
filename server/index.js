@@ -673,11 +673,26 @@ app.get("/a/:areaToken/:campaignToken", (req, res) => {
   const routes = db
     .prepare("SELECT * FROM routes WHERE area_id = ? AND campaign_id = ? ORDER BY created_at DESC")
     .all(area.id, campaign.id);
+  // Other areas in the city (and their routes for this campaign) — shown dimmed.
+  const others = db
+    .prepare("SELECT * FROM areas WHERE city_id = ? AND id != ? ORDER BY name")
+    .all(c.id, area.id)
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      color: a.color,
+      polygon: JSON.parse(a.polygon),
+      routes: db
+        .prepare("SELECT path FROM routes WHERE area_id = ? AND campaign_id = ?")
+        .all(a.id, campaign.id)
+        .map((r) => JSON.parse(r.path)),
+    }));
   res.json({
     area: parseArea(area),
     campaign: { id: campaign.id, name: campaign.name },
     city: c ? { slug: c.slug, name: c.name, center: c.center ? JSON.parse(c.center) : undefined, initial_zoom: c.initial_zoom } : null,
     routes: routes.map(parseRoute),
+    others,
   });
 });
 
