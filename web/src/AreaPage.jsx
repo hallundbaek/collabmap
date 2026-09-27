@@ -10,36 +10,47 @@ async function readJson(resp) {
   }
 }
 
-const CLICK_TOL_PX = 14;
-
 export default function AreaPage({ areaToken, campaignToken }) {
   const containerRef = useRef(null);
   const map = useMap(containerRef);
   const [data, setData] = useState(null);
-  const [mode, setMode] = useState("click"); // 'click' | 'freehand'
-  const [clickPts, setClickPts] = useState([]);
-  const [drawnPts, setDrawnPts] = useState([]);
-  const [isDrawing, setIsDrawing] = useState(false);
+  const [mode, setMode] = useState(null); // 'add' | null
+  const [clickPts, setClickPts] = useState([]); // [[x,y], ...]
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [linkCopied, setLinkCopied] = useState(false);
   const [routeEdit, setRouteEdit] = useState(null); // { id, points: [{x,y}] }
   const [hoverWp, setHoverWp] = useState(null);
   const fitted = useRef(false);
   const routeMarkers = useRef([]);
   const dragging = useRef(false);
+  const drawnRouteIds = useRef(new Set());
+  const lastData = useRef(null);
 
-  const load = async () => {
-    const d = await fetch(`/a/${areaToken}/${campaignToken}`, { cache: "no-store" }).then((r) => r.json());
-    if (d.error) { setError(d.error); return; }
+  const url = `/a/${areaToken}/${campaignToken}`;
+  const applyData = (d) => {
+    lastData.current = JSON.stringify(d);
     setData(d);
     document.title = `${d.area.name} - ${d.campaign.name}`;
   };
+  const load = async () => {
+    const d = await fetch(url, { cache: "no-store" }).then((r) => r.json());
+    if (d.error) { setError(d.error); return; }
+    applyData(d);
+  };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [areaToken, campaignToken]);
 
-  // Reflect area changes made elsewhere: refetch when the window regains focus.
+  // Reflect area changes made elsewhere when the window regains focus — but only
+  // if the data actually changed (avoids the mask/routes flashing).
   useEffect(() => {
-    const reload = () => { load().catch(() => {}); };
+    const reload = async () => {
+      if (document.hidden) return;
+      const d = await fetch(url, { cache: "no-store" }).then((r) => r.json()).catch(() => null);
+      if (!d || d.error) return;
+      if (JSON.stringify(d) === lastData.current) return;
+      applyData(d);
+    };
     window.addEventListener("focus", reload);
     return () => window.removeEventListener("focus", reload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,13 +66,9 @@ export default function AreaPage({ areaToken, campaignToken }) {
 
     const coords = data.area.polygon.coordinates[0];
     if (!coords || coords.length < 2) return;
-    // fitBounds expects two corners ([[w,s],[e,n]]), NOT the ring itself.
     const xs = coords.map((p) => p[0]);
     const ys = coords.map((p) => p[1]);
     const bounds = [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]];
-
-    // Fit only once the container has a real size; otherwise fitBounds can
-    // produce an absurd result (the map appears zoomed all the way out).
     let tries = 0;
     const fit = () => {
       const el = map.getContainer();
@@ -72,33 +79,56 @@ export default function AreaPage({ areaToken, campaignToken }) {
     requestAnimationFrame(fit);
   }, [map, data]);
 
-  // Existing routes (in the area's colour; the one being edited is drawn as the draft)
+  // Routes: draw in the area's colour, and remove deleted ones.
+  // (Highlighting is a separate layer so hovering doesn't re-add every route.)
   useEffect(() => {
     if (!map || !data) return;
     const color = data.area?.color || "#a78bfa";
+    const current = new Set((data.routes || []).map((r) => r.id));
+    for (const id of drawnRouteIds.current) {
+      if (!current.has(id)) {
+        const src = `route-${id}`;
+        if (map.getLayer(src + "-line")) map.removeLayer(src + "-line");
+        if (map.getSource(src)) map.removeSource(src);
+      }
+    }
+    drawnRouteIds.current = current;
     (data.routes || []).forEach((r) => {
       if (routeEdit?.id === r.id) { setLine(map, `route-${r.id}`, [], {}); return; }
       setLine(map, `route-${r.id}`, r.path.coordinates, { color, width: 3, opacity: 0.95 });
     });
   }, [map, data, routeEdit]);
 
-  // Draft (new route or route being edited)
+  // Highlight layer (one route, drawn on top) — updated without touching the rest.
   useEffect(() => {
     if (!map) return;
-    if (mode === "route-edit" && routeEdit) {
+    const src = "route-highlight";
+    if (map.getLayer(src + "-line")) map.removeLayer(src + "-line");
+    if (map.getSource(src)) map.removeSource(src);
+    const r = (data?.routes || []).find((x) => x.id === highlightId);
+    if (!r?.path?.coordinates) return;
+    setLine(map, src, r.path.coordinates, { color: "#ffd166", width: 6, opacity: 1 });
+  }, [map, data, highlightId]);
+
+  // Draft (new route waypoints or the route being edited)
+  useEffect(() => {
+    if (!map) return;
+    if (routeEdit) {
       const coords = routeEdit.points.map((p) => [p.x, p.y]);
       setLine(map, "draft", coords.length >= 2 ? coords : [], { color: "#38bdf8", width: 3 });
-    } else if (mode === "click") {
+      setMarkers(map, [], {});
+    } else if (mode === "add") {
       setLine(map, "draft", clickPts.length >= 2 ? clickPts : [], { color: "#f59e0b", width: 3 });
       setMarkers(map, clickPts, { color: "#f59e0b", size: "8px" });
     } else {
-      setLine(map, "draft", drawnPts.length >= 2 ? drawnPts : []);
+      setLine(map, "draft", [], {});
+      setMarkers(map, [], {});
     }
-  }, [map, mode, clickPts, drawnPts, routeEdit]);
+  }, [map, mode, clickPts, routeEdit]);
 
   // Draggable numbered route waypoint markers (snapped to roads on drop).
   useEffect(() => {
-    if (!map || mode !== "route-edit" || !routeEdit) {
+    if (!map || !routeEdit) {
       routeMarkers.current.forEach((m) => m.marker.remove());
       routeMarkers.current = [];
       return;
@@ -132,9 +162,9 @@ export default function AreaPage({ areaToken, campaignToken }) {
         return { marker, el };
       });
     }
-  }, [map, mode, routeEdit?.points.length]);
+  }, [map, routeEdit?.points.length]);
 
-  // Highlight hovered waypoint from the list.
+  // Highlight hovered waypoint from the route-edit list.
   useEffect(() => {
     routeMarkers.current.forEach(({ el }, i) => {
       const on = i === hoverWp;
@@ -143,7 +173,7 @@ export default function AreaPage({ areaToken, campaignToken }) {
       el.style.zIndex = on ? "10" : "1";
       el.style.boxShadow = on ? "0 0 0 3px rgba(239,68,68,.55), 0 0 10px rgba(0,0,0,.7)" : "0 0 6px rgba(0,0,0,.6)";
     });
-  }, [hoverWp, routeEdit?.points.length, mode]);
+  }, [hoverWp, routeEdit?.points.length]);
 
   const snapCoord = async (lon, lat) => {
     const slug = data?.city?.slug;
@@ -158,46 +188,22 @@ export default function AreaPage({ areaToken, campaignToken }) {
 
   const onMapClick = async (e) => {
     const raw = { x: e.lngLat.lng, y: e.lngLat.lat };
-    if (mode === "route-edit") {
-      if (dragging.current || !routeEdit) return;
+    if (routeEdit) {
+      if (dragging.current) return;
       const p = await snapCoord(raw.x, raw.y);
       setRouteEdit((d) => (d ? { ...d, points: insertNearestEdge(d.points, p) } : d));
       return;
     }
-    if (mode !== "click") return;
+    if (mode !== "add") return;
     const p = await snapCoord(raw.x, raw.y);
     setClickPts((prev) => [...prev, [p.x, p.y]]);
   };
   useEffect(() => {
-    if (!map || (mode !== "click" && mode !== "route-edit")) return;
+    if (!map || (!routeEdit && mode !== "add")) return;
     map.on("click", onMapClick);
     return () => map.off("click", onMapClick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, mode, data, routeEdit]);
-
-  // Freehand drawing via pointer events
-  useEffect(() => {
-    if (!map || mode !== "freehand") return;
-    const onDown = (e) => {
-      setIsDrawing(true);
-      setDrawnPts([[e.lngLat.lng, e.lngLat.lat]]);
-      e.originalEvent?.preventDefault?.();
-    };
-    const onMove = (e) => {
-      if (!isDrawing) return;
-      setDrawnPts((p) => (p && [...p, [e.lngLat.lng, e.lngLat.lat]]));
-    };
-    const onUp = () => setIsDrawing(false);
-    map.on("mousedown", onDown);
-    map.on("mousemove", onMove);
-    map.on("mouseup", onUp);
-    return () => {
-      map.off("mousedown", onDown);
-      map.off("mousemove", onMove);
-      map.off("mouseup", onUp);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, mode, isDrawing]);
 
   function insertNearestEdge(points, p) {
     if (points.length < 2) return [...points, { ...p }];
@@ -222,16 +228,35 @@ export default function AreaPage({ areaToken, campaignToken }) {
     return { x: a.x + t * abx, y: a.y + t * aby };
   }
 
+  // ---- Add a route ----
+  const startAdd = () => { setRouteEdit(null); setRoutesOpen(false); setHighlightId(null); setClickPts([]); setError(null); setMode("add"); };
+  const cancelAdd = () => { setMode(null); setClickPts([]); };
+  const undoAdd = () => setClickPts((p) => p.slice(0, -1));
+  const confirmAdd = async () => {
+    if (clickPts.length < 2) return setError("Place at least 2 waypoints on the map.");
+    setBusy(true); setError(null);
+    try {
+      const resp = await fetch(`/api/areas/${data.area.id}/routes`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaign_id: data.campaign.id, waypoints: clickPts }),
+      });
+      const json = await readJson(resp);
+      if (!resp.ok) throw new Error(json.error);
+      setData((d) => { const next = { ...d, routes: [json, ...(d.routes || [])] }; lastData.current = JSON.stringify(next); return next; });
+      setClickPts([]); setMode(null);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+
+  // ---- Edit / delete routes ----
   const routePoints = (r) => {
     const src = r.waypoints?.coordinates || r.drawn?.coordinates || r.path?.coordinates || [];
     return src.map((c) => ({ x: c[0], y: c[1] }));
   };
   const startRouteEdit = (r) => {
-    setClickPts([]); setDrawnPts([]); setError(null);
-    setMode("route-edit");
+    setClickPts([]); setMode(null); setError(null);
     setRouteEdit({ id: r.id, points: routePoints(r) });
   };
-  const cancelRouteEdit = () => { setRouteEdit(null); setMode("click"); setHoverWp(null); };
+  const cancelRouteEdit = () => { setRouteEdit(null); setHoverWp(null); };
   const deleteRouteWaypoint = (i) => {
     setRouteEdit((d) => {
       if (!d || d.points.length <= 2) return d;
@@ -250,7 +275,7 @@ export default function AreaPage({ areaToken, campaignToken }) {
       });
       const json = await readJson(resp);
       if (!resp.ok) throw new Error(json.error);
-      await load();
+      setData((d) => { const next = { ...d, routes: (d.routes || []).map((r) => (r.id === json.id ? json : r)) }; lastData.current = JSON.stringify(next); return next; });
       cancelRouteEdit();
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
@@ -261,36 +286,13 @@ export default function AreaPage({ areaToken, campaignToken }) {
       const json = await readJson(resp);
       if (!resp.ok) throw new Error(json.error);
       if (routeEdit?.id === r.id) cancelRouteEdit();
-      await load();
+      if (highlightId === r.id) setHighlightId(null);
+      setData((d) => { const next = { ...d, routes: (d.routes || []).filter((x) => x.id !== r.id) }; lastData.current = JSON.stringify(next); return next; });
     } catch (e) { setError(e.message); }
   };
 
-  const submit = async () => {
-    let body = null;
-    if (mode === "click" && clickPts.length >= 2) body = { campaign_id: data.campaign.id, waypoints: clickPts };
-    else if (mode === "freehand" && drawnPts.length >= 2) body = { campaign_id: data.campaign.id, drawn: drawnPts };
-    else { setError(`Draw ${mode === "click" ? "at least 2 waypoints" : "a line on the map"} first.`); return; }
-    setBusy(true); setError(null);
-    try {
-      const resp = await fetch(`/api/areas/${data.area.id}/routes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const json = await readJson(resp);
-      if (!resp.ok) throw new Error(json.error);
-      setData((d) => ({ ...d, routes: [json, ...(d.routes || [])] }));
-      setClickPts([]); setDrawnPts([]);
-    } catch (e) { setError(e.message); }
-    finally { setBusy(false); }
-  };
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(window.location.href).then(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 1500);
-    });
-  };
+  const routes = data?.routes || [];
+  const routesReversed = [...routes].reverse(); // oldest first → latest has highest number
 
   return (
     <div style={{ position: "absolute", inset: 0 }}>
@@ -301,34 +303,24 @@ export default function AreaPage({ areaToken, campaignToken }) {
         </div>
       )}
 
-      <div style={{ position: "absolute", top: 12, left: 12, width: 310, maxHeight: "calc(100% - 24px)", overflow: "auto", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: 14, zIndex: 10 }}>
+      <div style={{ position: "absolute", top: 12, left: 12, width: 300, maxHeight: "calc(100% - 24px)", overflow: "auto", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: 14, zIndex: 10 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h2 style={{ margin: 0, fontSize: 16 }}>{data?.area?.name}{data?.campaign?.name ? ` - ${data.campaign.name}` : ""}</h2>
           <span className="hint">{data?.city?.name}</span>
         </div>
 
-        {!routeEdit ? (
-          <>
-            <p className="hint">Record routes you have walked in this area.</p>
-            <div className="row" style={{ margin: "10px 0" }}>
-              <button className={mode === "click" ? "" : "ghost"} onClick={() => setMode("click")}>Click points</button>
-              <button className={mode === "freehand" ? "" : "ghost"} onClick={() => setMode("freehand")}>Draw line</button>
+        {mode === "add" ? (
+          <div className="col" style={{ marginTop: 8 }}>
+            <span className="hint">{clickPts.length} waypoint(s)</span>
+            <div className="row">
+              <button className="grow" onClick={confirmAdd} disabled={busy || clickPts.length < 2}>{busy ? "Saving…" : "Confirm"}</button>
+              <button className="ghost" onClick={undoAdd} disabled={!clickPts.length}>Undo</button>
+              <button className="ghost" onClick={cancelAdd}>Cancel</button>
             </div>
-            <div className="col">
-              {mode === "click"
-                ? <span className="hint">{clickPts.length} waypoints. Click points on the map (they snap to roads), then Save route.</span>
-                : <span className="hint">Hold & drag on the map along your path, then Save route.</span>}
-              <div className="row">
-                <button className="grow" onClick={submit} disabled={busy}>{busy ? "Routing…" : "Save route"}</button>
-                <button className="ghost" onClick={() => { setClickPts([]); setDrawnPts([]); }}>Clear</button>
-              </div>
-              <button className="ghost" onClick={copyLink}>{linkCopied ? "Copied!" : "Copy share link"}</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="hint">Editing route #{routeEdit.id}.</p>
-            <span className="hint">Waypoints ({routeEdit.points.length}) — drag on the map, click to add, or delete:</span>
+          </div>
+        ) : routeEdit ? (
+          <div className="col" style={{ marginTop: 8 }}>
+            <p className="hint">Editing route. Drag waypoints, click to add, or delete:</p>
             <div style={{ maxHeight: 160, overflow: "auto", margin: "4px 0" }}>
               {routeEdit.points.map((p, i) => (
                 <div
@@ -347,26 +339,46 @@ export default function AreaPage({ areaToken, campaignToken }) {
               ))}
             </div>
             <div className="row">
-              <button className="grow" onClick={saveRouteEdit} disabled={busy || routeEdit.points.length < 2}>
-                {busy ? "Routing…" : "Save route"}
-              </button>
+              <button className="grow" onClick={saveRouteEdit} disabled={busy || routeEdit.points.length < 2}>{busy ? "Saving…" : "Save route"}</button>
               <button className="ghost" onClick={cancelRouteEdit}>Cancel</button>
             </div>
-          </>
-        )}
-
-        <hr style={{ borderColor: "var(--border)", margin: "12px 0" }} />
-        <span className="hint">Saved routes ({data?.routes?.length || 0})</span>
-        <div style={{ maxHeight: 180, overflow: "auto", marginTop: 6 }}>
-          {data?.routes?.map((r, i) => (
-            <div key={r.id || i} className="row" style={{ justifyContent: "space-between", fontSize: 12, padding: "2px 0" }}>
-              <span className="grow">#{i + 1} · {r.distance_m ? `${Math.round(r.distance_m)} m` : ""}</span>
-              <button className="ghost" onClick={() => startRouteEdit(r)} disabled={!!routeEdit}>Edit</button>
-              <button className="ghost" onClick={() => deleteRoute(r)} disabled={!!routeEdit}>Del</button>
+          </div>
+        ) : routesOpen ? (
+          <div className="col" style={{ marginTop: 8 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <span className="hint">Routes ({routes.length})</span>
+              <button className="ghost" onClick={() => { setRoutesOpen(false); setHighlightId(null); }}>Back</button>
             </div>
-          ))}
-          {(!data?.routes || data.routes.length === 0) && <span className="hint">No routes yet.</span>}
-        </div>
+            <div style={{ maxHeight: 260, overflow: "auto" }}>
+              {routesReversed.map((r, i) => (
+                <div
+                  key={r.id}
+                  className="row"
+                  onMouseEnter={() => setHighlightId(r.id)}
+                  onMouseLeave={() => setHighlightId(null)}
+                  onClick={() => setHighlightId(r.id)}
+                  style={{
+                    justifyContent: "space-between", fontSize: 12, padding: "3px 4px", borderRadius: 4, cursor: "pointer",
+                    background: highlightId === r.id ? "rgba(255,209,102,0.25)" : "transparent",
+                  }}
+                >
+                  <span style={{ width: 28 }}>#{i + 1}</span>
+                  <span className="grow">{r.distance_m ? `${Math.round(r.distance_m)} m` : ""}</span>
+                  <button className="ghost" onClick={(e) => { e.stopPropagation(); startRouteEdit(r); }}>Edit</button>
+                  <button className="ghost" onClick={(e) => { e.stopPropagation(); deleteRoute(r); }}>Del</button>
+                </div>
+              ))}
+              {routes.length === 0 && <span className="hint">No routes yet.</span>}
+            </div>
+          </div>
+        ) : (
+          <div className="col" style={{ marginTop: 8 }}>
+            <div className="row">
+              <button className="grow" onClick={startAdd}>Add route</button>
+              <button className="grow" onClick={() => setRoutesOpen(true)}>See routes</button>
+            </div>
+          </div>
+        )}
 
         {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
       </div>

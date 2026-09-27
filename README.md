@@ -96,15 +96,16 @@ campaign's **Links** modal in the admin to copy any of them). The page title is
 
 - The area has **no fill colour**; instead everything **outside** it is darkened,
   so the area stands out against the normal basemap.
-- Add a route with **Click points** (click waypoints — each **snaps to the nearest
-  road** → **Save route**; the server routes a walking path between them) or with
-  **Draw line** (hold and drag along streets; the trace is map-matched). Routes are
-  recorded **for the campaign** in the link.
-- Saved routes are drawn in the **area's colour** and listed with their length.
-- **Edit** a route (or delete it) from the saved-routes list: the waypoint editor
-  works like the area editor — drag waypoints (they snap to roads), click to add,
-  delete waypoints, then **Save route** to re-route it.
-- The page reflects edits made to the area (it refetches when it regains focus).
+- **Add route** — click waypoints on the map (each **snaps to the nearest road**),
+  then **Confirm**; **Undo** removes the last waypoint and **Cancel** aborts. The
+  server routes a walking path between them; routes are recorded **for the campaign**
+  in the link. (There is no freehand "draw line" mode.)
+- **See routes** — opens the list of saved routes (the latest has the highest
+  number). Hovering or clicking a route **highlights it on the map**; **Edit** opens
+  the waypoint editor (drag waypoints, click to add, delete, then save to re-route)
+  and **Del** removes the route (the map updates immediately, no refresh needed).
+- The page reflects changes made elsewhere when it regains focus (and only updates
+  the map if something actually changed, so it never flashes).
 
 ## NixOS module
 
