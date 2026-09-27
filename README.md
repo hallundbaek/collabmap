@@ -159,6 +159,11 @@ package), and `settings.dataDir` (defaults to `/var/lib/collabmap`). The admin U
 is at `http://<host>:<port>/admin/<adminToken>`; `adminToken = null` (default)
 makes the server generate and persist one in the data dir (printed at startup).
 
+Everything is configured through `services.collabmap.settings` — no manual
+`systemd` environment overrides are needed. The module writes the cities config
+in the exact format the backend and provisioning script expect (mapping the
+camelCase Nix options to the file's snake_case fields).
+
 Individual packages are also exposed: `collabmap.packages.<system>.{collabmap,server,web,provision}`.
 
 ## Development commands

@@ -5,7 +5,16 @@ let
   cfg = config.services.collabmap;
   s = cfg.settings;
 
-  citiesJson = pkgs.writeText "collabmap-cities.json" (builtins.toJSON s.cities);
+  # The app/provisioning read the snake_case cities.json format; map the
+  # camelCase Nix options onto it here so users only set `settings.cities`.
+  citiesJson = pkgs.writeText "collabmap-cities.json" (builtins.toJSON (map (c: {
+    slug = c.slug;
+    name = c.name;
+    pbf_url = c.pbfUrl;
+    bbox = c.bbox;
+    initial_center = c.initialCenter;
+    initial_zoom = c.initialZoom;
+  }) s.cities));
   firstSlug = if s.cities == [ ] then "" else (builtins.head s.cities).slug;
   osrmFile = "${s.dataDir}/cities/${firstSlug}/${firstSlug}.osrm";
 in
