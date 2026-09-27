@@ -112,7 +112,7 @@ The flake exposes a NixOS module, so another flake can use it as an input:
 
 ```nix
 {
-  inputs.collabmap.url = "github:you/collabmap";
+  inputs.collabmap.url = "github:hallundbaek/collabmap";
 
   outputs = { self, nixpkgs, collabmap, ... }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
