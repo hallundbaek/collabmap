@@ -699,9 +699,21 @@ app.get("/a/:areaToken/:campaignToken", (req, res) => {
 // Serve the built web app (production) when WEB_DIST is set, with SPA fallback.
 const WEB_DIST = process.env.WEB_DIST;
 if (WEB_DIST && fs.existsSync(WEB_DIST)) {
-  app.use(express.static(WEB_DIST));
+  // Hashed assets can be cached forever; index.html must always be revalidated
+  // so a new deploy is picked up (mobile browsers otherwise serve a stale HTML).
+  app.use(express.static(WEB_DIST, {
+    setHeaders: (res) => {
+      res.setHeader(
+        "Cache-Control",
+        res.req.path.startsWith("/assets/")
+          ? "public, max-age=31536000, immutable"
+          : "no-cache"
+      );
+    },
+  }));
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path.startsWith("/a/")) return next();
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(WEB_DIST, "index.html"));
   });
 }
