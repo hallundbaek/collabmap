@@ -202,6 +202,12 @@ function cleanupOrphanWaypoints(cityId) {
   ).run(cityId);
 }
 
+// Routes fade over ROUTE_FADE_DAYS days; once fully faded they are removed.
+const ROUTE_FADE_DAYS = 14;
+function cleanupExpiredRoutes() {
+  db.prepare(`DELETE FROM routes WHERE created_at <= datetime('now', '-${ROUTE_FADE_DAYS} days')`).run();
+}
+
 // A slug that is unique within the city (appends -2, -3, … on collision).
 function uniqueSlug(cityId, name, excludeId = null) {
   const base = slugify(name);
@@ -669,6 +675,7 @@ app.get("/a/:areaToken/:campaignToken", (req, res) => {
   if (!area) return res.status(404).json({ error: "area not found" });
   const campaign = db.prepare("SELECT * FROM campaigns WHERE token = ?").get(req.params.campaignToken);
   if (!campaign || campaign.city_id !== area.city_id) return res.status(404).json({ error: "campaign not found" });
+  cleanupExpiredRoutes();
   const c = cityById(area.city_id);
   const routes = db
     .prepare("SELECT * FROM routes WHERE area_id = ? AND campaign_id = ? ORDER BY created_at DESC")
@@ -683,9 +690,9 @@ app.get("/a/:areaToken/:campaignToken", (req, res) => {
       color: a.color,
       polygon: JSON.parse(a.polygon),
       routes: db
-        .prepare("SELECT path FROM routes WHERE area_id = ? AND campaign_id = ?")
+        .prepare("SELECT path, created_at FROM routes WHERE area_id = ? AND campaign_id = ?")
         .all(a.id, campaign.id)
-        .map((r) => JSON.parse(r.path)),
+        .map((r) => ({ path: JSON.parse(r.path), created_at: r.created_at })),
     }));
   res.json({
     area: parseArea(area),
@@ -744,6 +751,10 @@ function resnapAllAreas() {
   if (changed) console.log(`re-snapped ${changed} area boundary(ies) from their waypoints`);
 }
 try { resnapAllAreas(); } catch (e) { console.error("resnapAllAreas failed:", e.message); }
+
+// Remove routes that have fully faded, now and periodically.
+try { cleanupExpiredRoutes(); } catch (e) { console.error("cleanupExpiredRoutes failed:", e.message); }
+setInterval(() => { try { cleanupExpiredRoutes(); } catch { /* ignore */ } }, 60 * 60 * 1000).unref?.();
 
 app.listen(PORT, () => {
   console.log(`collabmap backend listening on http://localhost:${PORT}`);

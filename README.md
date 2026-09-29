@@ -103,9 +103,12 @@ campaign's **Links** modal in the admin to copy any of them). The page title is
   server routes a walking path between them; routes are recorded **for the campaign**
   in the link. (There is no freehand "draw line" mode.)
 - **See routes** — opens the list of saved routes (the latest has the highest
-  number). Hovering or clicking a route **highlights it on the map**; **Edit** opens
-  the waypoint editor (drag waypoints, click to add, delete, then save to re-route)
-  and **Del** removes the route (the map updates immediately, no refresh needed).
+  number, and each shows the **date it was added**). Hovering or clicking a route
+  **highlights it on the map**; **Edit** opens the waypoint editor (drag waypoints,
+  click to add, delete, then save to re-route) and **Del** removes the route (the
+  map updates immediately, no refresh needed).
+- Routes **fade linearly over 14 days** (on both the area page and the admin map)
+  and are **removed automatically once fully faded**.
 - The page reflects changes made elsewhere when it regains focus (and only updates
   the map if something actually changed, so it never flashes).
 

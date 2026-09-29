@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { useMap, setLine, setFill, setMask, setMarkers } from "./map.js";
+import { routeOpacity, routeDate } from "./routeFade.js";
 
 async function readJson(resp) {
   const text = await resp.text().catch(() => "");
@@ -83,9 +84,10 @@ export default function AreaPage({ areaToken, campaignToken }) {
 
     // …but their routes are drawn over the mask so they stay clearly visible.
     for (const o of data.others || []) {
-      (o.routes || []).forEach((p, i) =>
-        setLine(map, `otherroute-${o.id}-${i}`, p.coordinates, { color: o.color || "#94a3b8", width: 3, opacity: 1 })
-      );
+      (o.routes || []).forEach((p, i) => {
+        const op = routeOpacity(p.created_at);
+        setLine(map, `otherroute-${o.id}-${i}`, op > 0 ? p.path.coordinates : [], { color: o.color || "#94a3b8", width: 3, opacity: op });
+      });
     }
 
     if (fitted.current) return;
@@ -122,7 +124,8 @@ export default function AreaPage({ areaToken, campaignToken }) {
     drawnRouteIds.current = current;
     (data.routes || []).forEach((r) => {
       if (routeEdit?.id === r.id) { setLine(map, `route-${r.id}`, [], {}); return; }
-      setLine(map, `route-${r.id}`, r.path.coordinates, { color, width: 3, opacity: 0.95 });
+      const op = routeOpacity(r.created_at);
+      setLine(map, `route-${r.id}`, op > 0 ? r.path.coordinates : [], { color, width: 3, opacity: op });
     });
   }, [map, data, routeEdit]);
 
@@ -391,6 +394,7 @@ export default function AreaPage({ areaToken, campaignToken }) {
                 >
                   <span style={{ width: 28 }}>#{i + 1}</span>
                   <span className="grow">{r.distance_m ? `${Math.round(r.distance_m)} m` : ""}</span>
+                  <span className="hint" style={{ whiteSpace: "nowrap" }}>{routeDate(r.created_at).toLocaleDateString()}</span>
                   <button className="ghost" onClick={(e) => { e.stopPropagation(); startRouteEdit(r); }}>Edit</button>
                   <button className="ghost" onClick={(e) => { e.stopPropagation(); deleteRoute(r); }}>Del</button>
                 </div>

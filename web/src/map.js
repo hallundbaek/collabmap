@@ -123,7 +123,7 @@ export function drawRoutes(map, id, features, paint = {}) {
     paint: {
       "line-color": ["coalesce", ["get", "color"], paint.color || "#64748b"],
       "line-width": paint.width || 5,
-      "line-opacity": paint.opacity ?? 0.9,
+      "line-opacity": ["coalesce", ["get", "opacity"], paint.opacity ?? 0.9],
     },
   });
 }

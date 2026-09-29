@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { useMap, setLine, setFill, setMarkers, setLabels, drawRoutes } from "./map.js";
+import { routeOpacity } from "./routeFade.js";
 
 const CLICK_TOL_PX = 14;
 const DEFAULT_COLOR = "#22c55e";
@@ -59,6 +60,7 @@ export default function Builder({ token }) {
   const [busy, setBusy] = useState(false);
   const [snapping, setSnapping] = useState(false);
   const [tokenInvalid, setTokenInvalid] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(true);
 
   const authHeaders = useMemo(() => ({ "x-admin-token": token }), [token]);
   const apiFetch = (url, opts = {}) => fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...authHeaders } });
@@ -217,7 +219,7 @@ export default function Builder({ token }) {
       .filter((r) => r.path?.coordinates)
       .map((r) => ({
         type: "Feature",
-        properties: { color: colorByArea.get(r.area_id) || "#64748b" },
+        properties: { color: colorByArea.get(r.area_id) || "#64748b", opacity: routeOpacity(r.created_at) },
         geometry: r.path,
       }));
     drawRoutes(map, "aroutes", features, { width: 5, opacity: 0.9 });
@@ -569,8 +571,12 @@ export default function Builder({ token }) {
     <div style={{ position: "absolute", inset: 0 }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
 
+      {menuOpen ? (
       <div style={{ position: "absolute", top: 50, left: 12, width: 340, maxHeight: "calc(100% - 70px)", overflow: "auto", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: 14, zIndex: 10 }}>
-        <h2 style={{ margin: "0 0 10px", fontSize: 16 }}>CollabMap — Admin</h2>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <h2 style={{ margin: 0, fontSize: 16 }}>CollabMap — Admin</h2>
+          <button className="ghost" title="Collapse menu" onClick={() => setMenuOpen(false)} style={{ padding: "0 8px" }}>«</button>
+        </div>
 
         <label className="hint">City</label>
         <select value={citySlug || ""} onChange={(e) => selectCity(e.target.value)} style={{ width: "100%", marginBottom: 10 }}>
@@ -681,6 +687,9 @@ export default function Builder({ token }) {
         {snapping && <div className="hint" style={{ marginTop: 6 }}>Snapping to road…</div>}
         {error && <div className="error" style={{ marginTop: 8 }}>{error}</div>}
       </div>
+      ) : (
+        <button title="Expand menu" onClick={() => setMenuOpen(true)} style={{ position: "absolute", top: 50, left: 12, zIndex: 10, background: "var(--panel)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontWeight: 600, cursor: "pointer" }}>☰ Menu</button>
+      )}
 
       {linksCampaign && (
         <div
