@@ -41,13 +41,12 @@ fi
 # 2. Provision datasets (idempotent; skipped when already built)
 WORK_ROOT="$work_root" "$code_root/provisioning/build-all.sh"
 
-# 3. Identify the OSRM dataset file to serve. For now, serve the first provisioned city.
-slug="$(jq -r '.[0].slug' "$cities_json")"
-osrm_file="$data_dir/cities/$slug/$slug.osrm"
+# 3. Identify the OSRM dataset file to serve (single union-region dataset).
+osrm_file="$data_dir/osrm/region.osrm"
 
 if [[ ! -f "$osrm_file.hsgr" || ! -f "$osrm_file.datasource_names" ]]; then
-  echo "error: OSRM dataset missing for '$slug' ($osrm_file)." >&2
-  echo "Run 'nix run .#provision' (or remove 'data/cities/$slug' and re-run)." >&2
+  echo "error: OSRM region dataset missing ($osrm_file)." >&2
+  echo "Run 'nix run .#provision' (or remove 'data/osrm' and re-run)." >&2
   exit 1
 fi
 
@@ -58,7 +57,7 @@ if curl -s --max-time 1 "$PROBE" 2>/dev/null | grep -q Ok; then
   echo "==> osrm-routed already running on :$OSRM_PORT"
   OSRM_PID=""
 else
-  echo "==> starting osrm-routed (CH) for $slug on :$OSRM_PORT"
+  echo "==> starting osrm-routed (CH) region on :$OSRM_PORT"
   osrm-routed --algorithm ch --port "$OSRM_PORT" "$osrm_file" &
   OSRM_PID=$!
   # Wait until OSRM has loaded its MLD data before continuing.

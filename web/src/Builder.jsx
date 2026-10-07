@@ -321,12 +321,15 @@ export default function Builder({ token }) {
   }, [hoverWp, edit?.points.length, mode]);
 
   // ---- Road snapping ----
+  const SNAP_MAX_M = 100; // don't drag a point to a far-away road (e.g. outside coverage)
   const snapCoord = async (lon, lat) => {
     if (!citySlug) return { x: lon, y: lat };
     try {
-      const r = await apiFetch(`/api/cities/${citySlug}/snap?lon=${lon}&lat=${lat}`);
+      const r = await fetch(`/api/cities/${citySlug}/snap?lon=${lon}&lat=${lat}`);
       const j = await r.json();
-      if (Number.isFinite(j.lon) && Number.isFinite(j.lat)) return { x: j.lon, y: j.lat };
+      if (Number.isFinite(j.lon) && Number.isFinite(j.lat) && (!Number.isFinite(j.distance_m) || j.distance_m <= SNAP_MAX_M)) {
+        return { x: j.lon, y: j.lat };
+      }
     } catch { /* ignore */ }
     return { x: lon, y: lat };
   };

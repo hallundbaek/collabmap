@@ -3,7 +3,7 @@ set -euo pipefail
 # Tests admin behaviors: road snapping, neighbour-distinct colors, rename, delete.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 port=4332
-osrm_file="$root/data/cities/copenhagen/copenhagen.osrm"
+osrm_file="$root/data/osrm/region.osrm"
 data="${CM_TEST_DATA:-/tmp/cm-test-test-area-admin}"
 rm -rf "$data"; mkdir -p "$data"
 export ADMIN_TOKEN=testadmintoken

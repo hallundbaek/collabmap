@@ -10,6 +10,7 @@ export function useMap(containerRef, opts = {}) {
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    if (opts.ready === false) return; // delay creation until initial view is known
     const m = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE_URL,
@@ -17,6 +18,8 @@ export function useMap(containerRef, opts = {}) {
       zoom: opts.zoom ?? 12,
     });
     m.addControl(new maplibregl.NavigationControl(), "top-left");
+    // Apply the initial camera synchronously so the first frame shows the target.
+    if (opts.onInit) { try { opts.onInit(m); } catch { /* ignore */ } }
     m.on("load", () => setMap(m));
     mapRef.current = m;
     return () => {
@@ -25,7 +28,7 @@ export function useMap(containerRef, opts = {}) {
       setMap(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [opts.ready]);
 
   return map;
 }

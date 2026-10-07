@@ -5,7 +5,7 @@ set -euo pipefail
 # Run with: nix develop -c bash scripts/seed-perf.sh
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 data="$root/data"
-osrm_file="$data/cities/copenhagen/copenhagen.osrm"
+osrm_file="$data/osrm/region.osrm"
 api_port="${API_PORT:-4345}"
 osrm_port="${OSRM_PORT:-5101}"
 n="${N_AREAS:-10}"

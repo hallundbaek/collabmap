@@ -160,14 +160,20 @@ function slugify(s) {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "area";
 }
 
-// Seed cities from cities.json on first run (idempotent by slug).
+// Sync cities from cities.json on startup (idempotent by slug): new cities are
+// added and existing ones refreshed, so editing cities.json takes effect without
+// wiping the database.
 export function ensureDefaultCities() {
-  const seeded = db.prepare("SELECT COUNT(*) AS n FROM cities").get().n;
-  if (seeded > 0) return;
   const list = JSON.parse(readFileSync(citiesJson, "utf8"));
-  const ins = db.prepare(
-    "INSERT INTO cities (slug, name, bbox, center, initial_zoom) VALUES (@slug, @name, @bbox, @center, @initial_zoom)"
-  );
+  const ins = db.prepare(`
+    INSERT INTO cities (slug, name, bbox, center, initial_zoom)
+    VALUES (@slug, @name, @bbox, @center, @initial_zoom)
+    ON CONFLICT(slug) DO UPDATE SET
+      name = excluded.name,
+      bbox = excluded.bbox,
+      center = excluded.center,
+      initial_zoom = excluded.initial_zoom
+  `);
   const tx = db.transaction(() => {
     for (const c of list) {
       ins.run({
@@ -177,6 +183,13 @@ export function ensureDefaultCities() {
         center: JSON.stringify(c.initial_center),
         initial_zoom: c.initial_zoom,
       });
+    }
+    // Remove cities no longer listed, but never delete one that still has areas.
+    if (list.length) {
+      const ph = list.map(() => "?").join(",");
+      db.prepare(
+        `DELETE FROM cities WHERE slug NOT IN (${ph}) AND id NOT IN (SELECT DISTINCT city_id FROM areas)`
+      ).run(...list.map((c) => c.slug));
     }
   });
   tx();

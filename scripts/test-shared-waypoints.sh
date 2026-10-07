@@ -6,7 +6,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 port=4331
-osrm_file="$root/data/cities/copenhagen/copenhagen.osrm"
+osrm_file="$root/data/osrm/region.osrm"
 data="${CM_TEST_DATA:-/tmp/cm-test-test-shared-waypoints}"
 rm -rf "$data"; mkdir -p "$data"
 export ADMIN_TOKEN=testadmintoken

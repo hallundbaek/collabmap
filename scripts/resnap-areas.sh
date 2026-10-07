@@ -5,7 +5,7 @@ set -euo pipefail
 # clean up routed nooks/crannies on areas created before simplification existed.
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 data="$root/data"
-osrm_file="$data/cities/copenhagen/copenhagen.osrm"
+osrm_file="$data/osrm/region.osrm"
 port="${PORT:-4334}"
 
 if [[ ! -f "$osrm_file.hsgr" ]]; then

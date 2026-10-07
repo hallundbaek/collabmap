@@ -1,22 +1,27 @@
 { self }:
 { config, lib, pkgs, ... }:
 let
-  inherit (lib) mkEnableOption mkIf mkOption types optional optionalString;
+  inherit (lib) mkEnableOption mkIf mkOption types optional;
   cfg = config.services.collabmap;
   s = cfg.settings;
 
-  # The app/provisioning read the snake_case cities.json format; map the
-  # camelCase Nix options onto it here so users only set `settings.cities`.
+  # The region dataset is built at Nix build time and shipped to the host, so
+  # the host never runs osmium/osrm-extract/osrm-contract.
+  dataset = pkgs.callPackage ./dataset.nix {
+    pbfUrl = s.region.pbfUrl;
+    pbfHash = s.region.pbfHash;
+    bbox = s.region.bbox;
+  };
+  osrmFile = "${dataset}/region.osrm";
+
+  # The generated cities file is only used to seed the DB (groupings + map view).
   citiesJson = pkgs.writeText "collabmap-cities.json" (builtins.toJSON (map (c: {
     slug = c.slug;
     name = c.name;
-    pbf_url = c.pbfUrl;
-    bbox = c.bbox;
+    bbox = s.region.bbox;
     initial_center = c.initialCenter;
     initial_zoom = c.initialZoom;
   }) s.cities));
-  firstSlug = if s.cities == [ ] then "" else (builtins.head s.cities).slug;
-  osrmFile = "${s.dataDir}/cities/${firstSlug}/${firstSlug}.osrm";
 in
 {
   options.services.collabmap = {
@@ -26,7 +31,7 @@ in
       type = types.package;
       default = self.packages.${pkgs.system}.collabmap;
       defaultText = lib.literalExpression "collabmap flake package";
-      description = "The CollabMap package (server + web + provisioning).";
+      description = "The CollabMap package (server + web).";
     };
 
     settings = mkOption {
@@ -36,6 +41,11 @@ in
         options = {
           port = mkOption { type = types.port; default = 4321; description = "HTTP port for the web app."; };
           osrmPort = mkOption { type = types.port; default = 5000; description = "Port for the local OSRM server."; };
+          osrmThreads = mkOption {
+            type = types.nullOr types.int;
+            default = null;
+            description = "Cap osrm-routed worker threads (bounds RAM on constrained hosts).";
+          };
           adminToken = mkOption {
             type = types.nullOr types.str;
             default = null;
@@ -44,31 +54,42 @@ in
           dataDir = mkOption {
             type = types.str;
             default = "/var/lib/collabmap";
-            description = "Directory for the SQLite DB and OSRM datasets.";
+            description = "Directory for the SQLite DB (the routing dataset lives in the Nix store).";
           };
-          autoProvision = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Download OSM extracts and build the OSRM datasets on start.";
+
+          region = mkOption {
+            description = "Routing coverage (union bbox) and the OSM extract it is built from.";
+            default = { };
+            type = types.submodule {
+              options = {
+                pbfUrl = mkOption {
+                  type = types.str;
+                  default = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf";
+                  description = "URL of the region OSM extract (pin a dated snapshot for stability).";
+                };
+                pbfHash = mkOption {
+                  type = types.str;
+                  default = "sha256-hOF0XUGC4TjZtCpMXKFKQboKKJJMqJms3teG/IusrRA=";
+                  description = "SRI hash of the PBF. NOTE: Geofabrik '-latest' rolls daily — pin a dated snapshot (and its hash) for stability.";
+                };
+                bbox = mkOption {
+                  type = types.listOf types.number;
+                  default = [ 12.03 55.60 12.75 55.77 ];
+                  description = "Union routing bbox [minLon minLat maxLon maxLat].";
+                };
+              };
+            };
           };
+
           cities = mkOption {
             default = [
-              {
-                slug = "copenhagen";
-                name = "Copenhagen";
-                pbfUrl = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf";
-                bbox = [ 12.40 55.60 12.75 55.77 ];
-                initialCenter = [ 12.568 55.676 ];
-                initialZoom = 12;
-              }
+              { slug = "copenhagen"; name = "Copenhagen"; initialCenter = [ 12.568 55.676 ]; initialZoom = 12; }
             ];
-            description = "Cities to serve (each is provisioned and selectable in the admin).";
+            description = "Logical city groupings (areas can be drawn anywhere in the region).";
             type = types.listOf (types.submodule {
               options = {
                 slug = mkOption { type = types.str; };
                 name = mkOption { type = types.str; };
-                pbfUrl = mkOption { type = types.str; };
-                bbox = mkOption { type = types.listOf types.number; };
                 initialCenter = mkOption { type = types.listOf types.number; };
                 initialZoom = mkOption { type = types.number; default = 12; };
               };
@@ -90,33 +111,16 @@ in
 
     systemd.tmpfiles.rules = [ "d ${s.dataDir} 0750 collabmap collabmap -" ];
 
-    systemd.services.collabmap-provision = mkIf s.autoProvision {
-      description = "CollabMap OSRM dataset provisioning";
-      wantedBy = [ "multi-user.target" ];
-      before = [ "collabmap-osrm.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = "collabmap";
-        Group = "collabmap";
-        StateDirectory = "collabmap";
-        Environment = [
-          "DATA_DIR=${s.dataDir}"
-          "CITIES_FILE=${citiesJson}"
-        ];
-        ExecStart = "${cfg.package}/bin/collabmap-provision";
-      };
-    };
-
     systemd.services.collabmap-osrm = {
       description = "CollabMap OSRM (foot) routing server";
-      after = [ "network.target" ] ++ optional s.autoProvision "collabmap-provision.service";
-      requires = optional s.autoProvision "collabmap-provision.service";
+      after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         User = "collabmap";
         Group = "collabmap";
-        ExecStart = "${pkgs.osrm-backend}/bin/osrm-routed --algorithm ch --port ${toString s.osrmPort} ${osrmFile}";
+        ExecStart = "${pkgs.osrm-backend}/bin/osrm-routed --algorithm ch "
+          + lib.optionalString (s.osrmThreads != null) "--threads ${toString s.osrmThreads} "
+          + "${osrmFile}";
         Restart = "on-failure";
         RestartSec = 2;
       };

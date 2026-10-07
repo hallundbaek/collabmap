@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 01-download <cities.json> <data_dir> <index>
-# Downloads the region PBF referenced by city[index].pbf_url into data/pbf/.
+# 01-download <cities.json> <data_dir>
+# Downloads the shared region PBF (from the first city's pbf_url).
 
 cities_json="$1"
 data_dir="$2"
-i="$3"
 
-pbf_url="$(jq -r ".[$i].pbf_url" "$cities_json")"
-slug="$(jq -r ".[$i].slug" "$cities_json")"
+pbf_url="$(jq -r '.[0].pbf_url' "$cities_json")"
 pbf_dir="$data_dir/pbf"
+target="$pbf_dir/$(basename "$pbf_url")"
 
 mkdir -p "$pbf_dir"
-
-# Derive a local filename from the URL basename (e.g. denmark-latest.osm.pbf)
-file_name="$(basename "$pbf_url")"
-target="$pbf_dir/$file_name"
 
 if [[ -f "$target" ]]; then
   echo "    pbf present: $target"

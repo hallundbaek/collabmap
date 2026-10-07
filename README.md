@@ -11,7 +11,10 @@ routes between their vertices.
 
 - **Frontend:** React + MapLibre GL (OpenFreeMap vector tiles)
 - **Backend:** Node.js + Express + SQLite (better-sqlite3)
-- **Routing:** self-hosted OSRM, foot profile, provisioned through a Nix flake
+- **Routing:** self-hosted OSRM, foot profile (distance-weighted → the **shortest
+  walking path** between waypoints). Pedestrians follow the street centreline
+  even where a sidewalk is mapped separately (`foot=use_sidepath`), avoiding
+  large detours; provisioned through a Nix flake
 - **Auth:** none — area pages are open via URL
 - **Cities:** multiple; seeded with **Copenhagen** (Geofabrik Denmark extract)
 
@@ -131,16 +134,17 @@ The flake exposes a NixOS module, so another flake can use it as an input:
             settings = {
               port = 4321;               # web app
               osrmPort = 5000;           # local OSRM
+              osrmThreads = 2;           # cap osrm-routed threads (bounds RAM)
               adminToken = "change-me";  # fixed admin token
+              region = {
+                pbfUrl = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf";
+                # Pin the PBF by hash (nix hash file --type sha256 --sri denmark-latest.osm.pbf).
+                # Geofabrik "-latest" rolls daily — prefer a dated snapshot for stability.
+                pbfHash = "sha256-hOF0XUGC4TjZtCpMXKFKQboKKJJMqJms3teG/IusrRA=";
+                bbox = [ 12.03 55.60 12.75 55.77 ];  # routing coverage (union)
+              };
               cities = [
-                {
-                  slug = "copenhagen";
-                  name = "Copenhagen";
-                  pbfUrl = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf";
-                  bbox = [ 12.40 55.60 12.75 55.77 ];
-                  initialCenter = [ 12.568 55.676 ];
-                  initialZoom = 12;
-                }
+                { slug = "copenhagen"; name = "Copenhagen"; initialCenter = [ 12.568 55.676 ]; initialZoom = 12; }
               ];
             };
           };
@@ -151,33 +155,47 @@ The flake exposes a NixOS module, so another flake can use it as an input:
 }
 ```
 
-This defines three systemd services:
+Cities are **logical groupings** (for the admin dropdown, map view, and public link
+titles); **routing coverage is the `region.bbox`**, so areas for any city can be
+drawn anywhere inside it.
 
-- **`collabmap-provision`** (oneshot, if `settings.autoProvision`) — downloads the
-  region PBFs and builds each city's OSRM foot dataset into `settings.dataDir`
-  (needs network on first start).
-- **`collabmap-osrm`** — runs `osrm-routed` (CH) on the first city's dataset.
+This defines two systemd services:
+
+- **`collabmap-osrm`** — runs `osrm-routed` (CH) on the **region dataset**, which is
+  built at **Nix build time** (see below) and served straight from the Nix store.
 - **`collabmap`** — the Express backend, which also **serves the built web app**
   (`WEB_DIST`), so everything is on one port (`settings.port`).
 
+### Deploying from a powerful machine
+
+The dataset is a build-time derivation (`nix/dataset.nix`): it fetches the PBF
+(hash-pinned), clips to the union bbox, and runs `osrm-extract`/`osrm-contract`.
+Because it's part of the system closure, it is **built on the machine running
+`nixos-rebuild`** — the host never runs osmium/OSRM. So you can build here and push
+to a resource-constrained host:
+
+```sh
+nixos-rebuild switch --flake .#myhost --target-host root@xxx.xx --use-remote-sudo
+```
+
+(Requires SSH access to the host and the same `system`; a `root@` target — or a user
+in `nix.settings.trusted-users` — avoids needing to sign store paths. You can also
+use a binary cache or a remote builder instead.)
+
 Useful options: `services.collabmap.package` (defaults to the flake's `collabmap`
-package), and `settings.dataDir` (defaults to `/var/lib/collabmap`). The admin UI
-is at `http://<host>:<port>/admin/<adminToken>`; `adminToken = null` (default)
-makes the server generate and persist one in the data dir (printed at startup).
+package), and `settings.dataDir` (defaults to `/var/lib/collabmap`, holds only the
+SQLite DB — the dataset lives in the store). The admin UI is at
+`http://<host>:<port>/admin/<adminToken>`; `adminToken = null` (default) makes the
+server generate and persist one in the data dir (printed at startup).
 
-Everything is configured through `services.collabmap.settings` — no manual
-`systemd` environment overrides are needed. The module writes the cities config
-in the exact format the backend and provisioning script expect (mapping the
-camelCase Nix options to the file's snake_case fields).
-
-Individual packages are also exposed: `collabmap.packages.<system>.{collabmap,server,web,provision}`.
+Individual packages are exposed: `collabmap.packages.<system>.{collabmap,server,web}`.
 
 ## Development commands
 
 | Command | Purpose |
 | --- | --- |
 | `nix run .#dev` | Start the whole stack (default port 4321) |
-| `nix run .#provision` | Re-provision OSRM datasets for all cities |
+| `nix run .#provision` | Build the union-clip OSRM region dataset |
 | `nix develop` | Enter a dev shell (node, npm, osrm, osmium, jq, curl) |
 | `bash scripts/test-api.sh` | Smoke-test the backend API (boots OSRM itself) |
 | `bash scripts/test-edit-divide.sh` | Test area edit + divide |
@@ -188,6 +206,9 @@ Individual packages are also exposed: `collabmap.packages.<system>.{collabmap,se
 | `bash scripts/e2e.sh` | Boot `nix run .#dev` and probe all services |
 
 ## Adding a city
+
+Cities are logical groupings; routing coverage is the **union** of all cities'
+bboxes, built once as a single region dataset.
 
 1. Add an entry to `server/cities.json`:
    ```json
@@ -200,15 +221,15 @@ Individual packages are also exposed: `collabmap.packages.<system>.{collabmap,se
      "initial_zoom": 12
    }
    ```
-2. Run `nix run .#provision` (downloads the region PBF, clips it to the
-   bounding box, and builds the OSRM foot graph).
+2. Run `nix run .#provision` (downloads the PBF, clips to the **union** bbox, and
+   builds the OSRM foot graph at `data/osrm/region.osrm`).
 3. `nix run .#dev` — the new city appears in the admin dropdown.
 
-> Note: `bbox` should be `[min_lon, min_lat, max_lon, max_lat]` and must fully
-> contain the area you want to partition.
-
-Note: `nix run .#dev` currently serves the OSRM dataset for the **first** city
-in `server/cities.json` only.
+> `bbox` is `[min_lon, min_lat, max_lon, max_lat]`. It widens the routing region;
+> areas for any city can be drawn anywhere inside the union.
+>
+> For the NixOS module, add the city to `settings.cities` and widen
+> `settings.region.bbox` (and update `pbfHash` if the PBF changed).
 
 ## Layout
 

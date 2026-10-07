@@ -13,7 +13,6 @@ async function readJson(resp) {
 
 export default function AreaPage({ areaToken, campaignToken }) {
   const containerRef = useRef(null);
-  const map = useMap(containerRef);
   const [data, setData] = useState(null);
   const [mode, setMode] = useState(null); // 'add' | null
   const [clickPts, setClickPts] = useState([]); // [[x,y], ...]
@@ -23,11 +22,35 @@ export default function AreaPage({ areaToken, campaignToken }) {
   const [error, setError] = useState(null);
   const [routeEdit, setRouteEdit] = useState(null); // { id, points: [{x,y}] }
   const [hoverWp, setHoverWp] = useState(null);
-  const fitted = useRef(false);
   const routeMarkers = useRef([]);
   const dragging = useRef(false);
   const drawnRouteIds = useRef(new Set());
   const lastData = useRef(null);
+
+  // Create the map only once the area is known, and jump straight to it
+  // (no city-centre start / zoom animation).
+  const areaCenter = (polygon) => {
+    const ring = (polygon?.coordinates?.[0] || []).slice(0, -1);
+    if (!ring.length) return undefined;
+    const sum = ring.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
+    return [sum[0] / ring.length, sum[1] / ring.length];
+  };
+  const map = useMap(containerRef, {
+    ready: !!data?.area,
+    center: data?.area ? areaCenter(data.area.polygon) : undefined,
+    zoom: 13,
+    onInit: (m) => {
+      if (!data?.area) return;
+      const coords = data.area.polygon.coordinates[0];
+      const xs = coords.map((p) => p[0]);
+      const ys = coords.map((p) => p[1]);
+      const bounds = [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]];
+      try {
+        const cam = m.cameraForBounds(bounds, { padding: 60, maxZoom: 16 });
+        if (cam) m.jumpTo(cam);
+      } catch { /* ignore */ }
+    },
+  });
 
   const url = `/a/${areaToken}/${campaignToken}`;
   const applyData = (d) => {
@@ -89,23 +112,6 @@ export default function AreaPage({ areaToken, campaignToken }) {
         setLine(map, `otherroute-${o.id}-${i}`, op > 0 ? p.path.coordinates : [], { color: o.color || "#94a3b8", width: 3, opacity: op });
       });
     }
-
-    if (fitted.current) return;
-    fitted.current = true;
-
-    const coords = data.area.polygon.coordinates[0];
-    if (!coords || coords.length < 2) return;
-    const xs = coords.map((p) => p[0]);
-    const ys = coords.map((p) => p[1]);
-    const bounds = [[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]];
-    let tries = 0;
-    const fit = () => {
-      const el = map.getContainer();
-      if ((el.clientWidth === 0 || el.clientHeight === 0) && tries++ < 120) { requestAnimationFrame(fit); return; }
-      map.resize();
-      try { map.fitBounds(bounds, { padding: 60, maxZoom: 16 }); } catch { /* ignore */ }
-    };
-    requestAnimationFrame(fit);
   }, [map, areaPolyKey, othersKey]);
 
   // Routes: draw in the area's colour, and remove deleted ones.
@@ -205,13 +211,16 @@ export default function AreaPage({ areaToken, campaignToken }) {
     });
   }, [hoverWp, routeEdit?.points.length]);
 
+  const SNAP_MAX_M = 100; // don't drag a point to a far-away road (e.g. outside coverage)
   const snapCoord = async (lon, lat) => {
     const slug = data?.city?.slug;
     if (!slug) return { x: lon, y: lat };
     try {
       const r = await fetch(`/api/cities/${slug}/snap?lon=${lon}&lat=${lat}`);
       const j = await r.json();
-      if (Number.isFinite(j.lon) && Number.isFinite(j.lat)) return { x: j.lon, y: j.lat };
+      if (Number.isFinite(j.lon) && Number.isFinite(j.lat) && (!Number.isFinite(j.distance_m) || j.distance_m <= SNAP_MAX_M)) {
+        return { x: j.lon, y: j.lat };
+      }
     } catch { /* ignore */ }
     return { x: lon, y: lat };
   };
@@ -327,7 +336,7 @@ export default function AreaPage({ areaToken, campaignToken }) {
   return (
     <div style={{ position: "absolute", inset: 0 }}>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
-      {!data && !error && (
+      {(!data || !map) && !error && (
         <div style={{ position: "absolute", inset: 0, background: "var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
           Loading…
         </div>

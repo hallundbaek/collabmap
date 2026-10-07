@@ -27,15 +27,13 @@
     packages = forAllSystems ({ pkgs, system }: let
       server = pkgs.callPackage ./nix/server.nix { };
       web = pkgs.callPackage ./nix/web.nix { };
-      provision = pkgs.callPackage ./nix/provision.nix { };
       collabmap = pkgs.runCommand "collabmap-0.1.0" { } ''
         mkdir -p $out/bin $out/share/collabmap
         cp -r ${server}/bin/. $out/bin/
-        cp ${provision}/bin/collabmap-provision $out/bin/collabmap-provision
         cp -r ${web} $out/share/collabmap/web
       '';
     in {
-      inherit server web provision collabmap;
+      inherit server web collabmap;
       default = collabmap;
     });
 
